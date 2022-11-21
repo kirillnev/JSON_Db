@@ -1,0 +1,389 @@
+type: edu
+files:
+- name: src/client/Main.java
+  visible: true
+  text: |-
+    package client;
+
+    import java.io.DataInputStream;
+    import java.io.DataOutputStream;
+    import java.io.IOException;
+    import java.net.InetAddress;
+    import java.net.Socket;
+
+    public class Main {
+
+        private final static String ADDRESS = "127.0.0.1";
+        private final static int PORT = 23456;
+
+        public static void main(String[] args) {
+            try (
+                Socket socket = new Socket(InetAddress.getByName(ADDRESS), PORT);
+                DataInputStream input = new DataInputStream(socket.getInputStream());
+                DataOutputStream output = new DataOutputStream(socket.getOutputStream());
+            ) {
+                System.out.println("Client started!");
+                String msg = "Give me a record # 12";
+                output.writeUTF(msg);
+                System.out.println("Sent: " + msg);
+                String receivedMsg = input.readUTF();
+                System.out.println("Received: " + receivedMsg);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+
+        }
+    }
+  learner_created: false
+- name: src/server/Main.java
+  visible: true
+  text: |-
+    package server;
+
+    import java.io.DataInputStream;
+    import java.io.DataOutputStream;
+    import java.io.IOException;
+    import java.net.InetAddress;
+    import java.net.ServerSocket;
+    import java.net.Socket;
+
+    /**
+     * Main class for the JsonDb Server
+     */
+
+    public class Main {
+        private final static String ADDRESS = "127.0.0.1";
+        private final static int PORT = 23456;
+
+        public static void main(String[] args) {
+            try (ServerSocket server = new ServerSocket(PORT, 50, InetAddress.getByName(ADDRESS));) {
+                System.out.println("Server started!");
+                while (true) {
+                    Session session = new Session(server.accept());
+                    break;
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+
+            //new DbController().run();
+        }
+
+    }
+  learner_created: false
+- name: src/server/Database.java
+  visible: true
+  text: |-
+    package server;
+
+    import java.util.Arrays;
+    import java.util.HashMap;
+    import java.util.function.BiFunction;
+
+    import static server.Constants.*;
+
+    /**
+     * model class representing a fixed length string database, that wraps a String[].
+     */
+    public class Database {
+
+        private final String[] cells = new String[DB_SIZE];
+        private final HashMap<String, BiFunction<Integer, String, RequestResult>> commands = new HashMap<>();
+
+        /**
+         * set a value in the 'database'
+         * @param index index to store into
+         * @param text text to store
+         * @return ERROR_MSG if index out of bound, OK_MSG else
+         */
+        public final BiFunction<Integer, String, RequestResult> set = (index, param) -> {
+            if (isInvalidIndex(index)) {
+                return new RequestResult(false, ERROR_MSG);
+            }
+            cells[index - 1] = param;
+            return new RequestResult(true, OK_MSG);
+        };
+
+        /**
+         * delete a value in the 'database' by setting it to empty string
+         * @param index index to delete
+         * @return ERROR_MSG if index out of bound, OK_MSG else
+         */
+        public final BiFunction<Integer, String, RequestResult> delete = (index, param) -> {
+            return this.set.apply(index, param);
+        };
+
+        /**
+         * get a value from the 'database' with given index
+         * @param index index to return the database value for
+         * @return ERROR_MSG if index out of bound or conten empty, the value else
+         */
+        public final BiFunction<Integer, String, RequestResult> get = (index, param) -> {
+            if (isInvalidIndex(index) || cells[index - 1].isEmpty()) {
+                return new RequestResult(false, ERROR_MSG);
+            }
+            return new RequestResult(false, cells[index - 1]);
+        };
+
+        public Database() {
+            Arrays.fill(cells, "");
+            commands.put("set", set);
+            commands.put("get", get);
+            commands.put("delete", delete);
+        }
+
+        private boolean isInvalidIndex(int index) {
+            return index < 1 || index > DB_SIZE;
+        }
+
+        public HashMap<String, BiFunction<Integer, String, RequestResult>> getCommands() {
+            return commands;
+        }
+    }
+  learner_created: false
+- name: src/server/Session.java
+  visible: true
+  text: |
+    package server;
+
+    import java.io.DataInputStream;
+    import java.io.DataOutputStream;
+    import java.io.IOException;
+    import java.net.Socket;
+
+    public class Session extends Thread{
+        private Socket socket;
+
+        public Session(Socket socket) {
+            super();
+            this.socket = socket;
+            this.start();
+        }
+
+        @Override
+        public void run() {
+            try (
+                DataInputStream input = new DataInputStream(socket.getInputStream());
+                DataOutputStream output  = new DataOutputStream(socket.getOutputStream());
+            ) {
+                String msg = input.readUTF();
+                System.out.println("Received: " + msg);
+                String receivedMsg = "A record # 12 was sent!";
+                output.writeUTF(receivedMsg);
+                System.out.println("Sent: " + receivedMsg);
+                socket.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+  learner_created: false
+- name: test/JsonDatabaseTest.java
+  visible: false
+  text: |
+    import org.hyperskill.hstest.dynamic.DynamicTest;
+    import org.hyperskill.hstest.stage.StageTest;
+    import org.hyperskill.hstest.testcase.CheckResult;
+    import org.hyperskill.hstest.testing.TestedProgram;
+
+    public class JsonDatabaseTest extends StageTest<String> {
+
+        private static final String OK_STATUS = "OK";
+        private static final String ERROR_STATUS = "ERROR";
+
+        private static final String WRONG_EXIT = "The server should stop when client sends 'exit' request";
+        private static final String WRONG_GET_EMPTY_CELL_WITH_ERROR = "When a client tries to get an empty cell from " +
+                "the server, the server should response with 'ERROR' and the client should print that response";
+        private static final String WRONG_SET_VALUE_TO_CELL_WITH_OK = "When a client tries to save a value on" +
+                " the server, the server should save the value and response with '" + OK_STATUS + "'. The client should " +
+                "print that response";
+        private static final String WRONG_GET_VALUE = "When a client tries to get a not empty cell from the server, " +
+                "the server should response with a value of the cell. The client should pint received value.\n" +
+                "May be the problem is in processing 'set' action:\nIf the specified cell already contains " +
+                "information, you should simply rewrite it.";
+        private static final String WRONG_DELETE = "When a client tries to delete a value from the cell on the server," +
+                " the server should assign an empty string to this cell and response with '" + OK_STATUS + "'.";
+        private static final String WRONG_DELETE_EMPTY = "When a client tries to delete a cell with an empty value from the server," +
+                " the server should assign an empty string to this cell and response with '" + OK_STATUS + "'.";
+        private static final String WRONG_DELETE_INDEX_OUT_OF_BOUNDS = "When a user tries to delete a cell which index " +
+                "is less than 0 or greater than 1000, the server should response with  '" + ERROR_STATUS + "'.";
+
+        @DynamicTest(order = 1)
+        CheckResult checkExit() {
+
+            TestedProgram server = getServer();
+            server.startInBackground();
+
+            TestedProgram client = getClient();
+            client.start("-t", "exit");
+
+            try {
+                Thread.sleep(50);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+
+            if (!server.isFinished()) {
+                server.stop();
+                return CheckResult.wrong(WRONG_EXIT);
+            }
+
+            return CheckResult.correct();
+        }
+
+        @DynamicTest(order = 2)
+        CheckResult testInputs() {
+
+            TestedProgram server = getServer();
+            server.startInBackground();
+
+            TestedProgram client;
+            String output;
+            String expectedValue;
+
+            client = getClient();
+            output = client.start("-t", "get", "-i", "1");
+            if (!output.toUpperCase().contains(ERROR_STATUS)) {
+                return CheckResult.wrong(WRONG_GET_EMPTY_CELL_WITH_ERROR);
+            }
+
+            client = getClient();
+            output = client.start("-t", "set", "-i", "1", "-m", "Hello world!");
+            if (!output.toUpperCase().contains(OK_STATUS)) {
+                return CheckResult.wrong(WRONG_SET_VALUE_TO_CELL_WITH_OK);
+            }
+
+            client = getClient();
+            output = client.start("-t", "set", "-i", "1", "-m", "HelloWorld!");
+            if (!output.toUpperCase().contains(OK_STATUS)) {
+                return CheckResult.wrong(WRONG_SET_VALUE_TO_CELL_WITH_OK);
+            }
+
+            client = getClient();
+            output = client.start("-t", "get", "-i", "1");
+            expectedValue = "HelloWorld!";
+            if (!output.contains(expectedValue)) {
+                return CheckResult.wrong(WRONG_GET_VALUE +
+                        "\nExpected:\n" + expectedValue + "\nYour output:\n" + output);
+            }
+
+            client = getClient();
+            output = client.start("-t", "delete", "-i", "1");
+            if (!output.toUpperCase().contains(OK_STATUS)) {
+                return CheckResult.wrong(WRONG_DELETE);
+            }
+
+            client = getClient();
+            output = client.start("-t", "delete", "-i", "1");
+            if (!output.toUpperCase().contains(OK_STATUS)) {
+                return CheckResult.wrong(WRONG_DELETE_EMPTY);
+            }
+
+            client = getClient();
+            output = client.start("-t", "get", "-i", "1");
+            if (!output.toUpperCase().contains(ERROR_STATUS)) {
+                return CheckResult.wrong(WRONG_GET_EMPTY_CELL_WITH_ERROR + "\nMay be after deleting a cell you didn't " +
+                        "assign an empty value to it.");
+            }
+
+            client = getClient();
+            output = client.start("-t", "set", "-i", "55", "-m", "Some text here");
+            if (!output.toUpperCase().contains(OK_STATUS)) {
+                return CheckResult.wrong(WRONG_SET_VALUE_TO_CELL_WITH_OK);
+            }
+
+            client = getClient();
+            output = client.start("-t", "get", "-i", "55");
+            expectedValue = "Some text here";
+            if (!output.contains(expectedValue)) {
+                return CheckResult.wrong(WRONG_GET_VALUE +
+                        "\nExpected:\n" + expectedValue + "\nYour output:\n" + output);
+            }
+
+            client = getClient();
+            output = client.start("-t", "get", "-i", "56");
+            if (!output.toUpperCase().contains(ERROR_STATUS)) {
+                return CheckResult.wrong(WRONG_GET_EMPTY_CELL_WITH_ERROR);
+            }
+
+            client = getClient();
+            output = client.start("-t", "delete", "-i", "55");
+            if (!output.toUpperCase().contains(OK_STATUS)) {
+                return CheckResult.wrong(WRONG_DELETE);
+            }
+
+            client = getClient();
+            output = client.start("-t", "delete", "-i", "56");
+            if (!output.toUpperCase().contains(OK_STATUS)) {
+                return CheckResult.wrong(WRONG_DELETE_EMPTY);
+            }
+
+            client = getClient();
+            output = client.start("-t", "delete", "-i", "100");
+            if (!output.toUpperCase().contains(OK_STATUS)) {
+                return CheckResult.wrong(WRONG_DELETE_EMPTY);
+            }
+
+            client = getClient();
+            output = client.start("-t", "delete", "-i", "1001");
+            if (!output.toUpperCase().contains(ERROR_STATUS)) {
+                return CheckResult.wrong(WRONG_DELETE_INDEX_OUT_OF_BOUNDS);
+            }
+
+            client = getClient();
+            client.start("-t", "exit");
+
+            return CheckResult.correct();
+        }
+
+
+        private static TestedProgram getClient() {
+            return new TestedProgram("client");
+        }
+
+        private static TestedProgram getServer() {
+            return new TestedProgram("server");
+        }
+
+        private static void stopServer() {
+            TestedProgram client = getClient();
+            client.start("-t", "exit");
+        }
+    }
+  learner_created: false
+- name: src/server/DeleteCommand.java
+  visible: true
+  learner_created: true
+- name: src/tmp/Constants.java
+  visible: true
+  learner_created: true
+- name: src/tmp/Database.java
+  visible: true
+  learner_created: true
+- name: src/server/SetCommand.java
+  visible: true
+  learner_created: true
+- name: src/tmp/Main.java
+  visible: true
+  learner_created: true
+- name: src/server/Controller.java
+  visible: true
+  learner_created: true
+- name: src/server/Params.java
+  visible: true
+  learner_created: true
+- name: src/server/Command.java
+  visible: true
+  learner_created: true
+- name: src/tmp/DbController.java
+  visible: true
+  learner_created: true
+- name: src/server/GetCommand.java
+  visible: true
+  learner_created: true
+- name: src/tmp/RequestResult.java
+  visible: true
+  learner_created: true
+feedback_link: https://hyperskill.org/learn/step/5492#comment
+status: Solved
+record: 2

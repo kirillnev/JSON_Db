@@ -1,0 +1,928 @@
+type: edu
+files:
+- name: src/client/Main.java
+  visible: true
+  text: |-
+    package client;
+
+    import java.io.DataInputStream;
+    import java.io.DataOutputStream;
+    import java.io.IOException;
+    import java.net.InetAddress;
+    import java.net.Socket;
+    import java.util.Arrays;
+    import java.util.List;
+    import java.util.Scanner;
+
+    public class Main {
+
+        private final static String ADDRESS = "127.0.0.1";
+        private final static int PORT = 23456;
+
+        public static void main(String[] args) {
+            Scanner scanner = new Scanner(System.in);
+            try (
+                Socket socket = new Socket(InetAddress.getByName(ADDRESS), PORT);
+                DataInputStream input = new DataInputStream(socket.getInputStream());
+                DataOutputStream output = new DataOutputStream(socket.getOutputStream());
+            ) {
+                System.out.println("Client started!");
+                boolean isExit = false;
+
+                //String[] arrStr = {"-t get -i 1", "-t set -i 1 -m hello1", "-t set -i 2 -m hello2", "-t delete -i 5", "-t get -i 1", "-t exit"};
+                //String[] args1 = {"-t", "set", "-i", "1", "-m", "ferfre"};
+
+                List<String> listStr = Arrays.asList(args);
+                String command = "";
+                int index = -1;
+                String value = "";
+                if (listStr.indexOf("-t") >= 0){
+                    command = listStr.get(listStr.indexOf("-t") + 1);
+                    if (listStr.indexOf("-i") >= 0){
+                        index = Integer.parseInt(listStr.get(listStr.indexOf("-i") + 1));
+                        if (listStr.indexOf("-m") >= 0){
+                            value = listStr.get(listStr.indexOf("-m") + 1);
+                        }
+                    }
+                }
+                System.out.println("Sent: " + command + (index == -1 ? "": " " + index) + " " + value);
+                output.writeUTF(String.join(" ", args));
+                String receivedMsg = input.readUTF();
+                System.out.printf("Received: %s\n", receivedMsg);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+
+        }
+    }
+  learner_created: false
+- name: src/tmp/Constants.java
+  visible: true
+  text: |
+    package tmp;
+
+    public class Constants {
+        public static final String ERROR_MSG = "ERROR";
+        public static final String OK_MSG = "OK";
+        public static final String UNKNOWN_COMMAND_MSG = "Unknown command";
+        public static final int DB_SIZE = 100;
+
+    }
+  learner_created: false
+- name: src/tmp/Database.java
+  visible: true
+  text: |-
+    package tmp;
+
+    import java.util.Arrays;
+    import java.util.HashMap;
+    import java.util.function.BiFunction;
+
+    import static tmp.Constants.*;
+
+    /**
+     * model class representing a fixed length string database, that wraps a String[].
+     */
+    public class Database {
+
+        private final String[] cells = new String[DB_SIZE];
+        private final HashMap<String, BiFunction<Integer, String, RequestResult>> commands = new HashMap<>();
+
+        /**
+         * set a value in the 'database'
+         * @param index index to store into
+         * @param text text to store
+         * @return ERROR_MSG if index out of bound, OK_MSG else
+         */
+        public final BiFunction<Integer, String, RequestResult> set = (index, param) -> {
+            if (isInvalidIndex(index)) {
+                return new RequestResult(false, ERROR_MSG);
+            }
+            cells[index - 1] = param;
+            return new RequestResult(true, OK_MSG);
+        };
+
+        /**
+         * delete a value in the 'database' by setting it to empty string
+         * @param index index to delete
+         * @return ERROR_MSG if index out of bound, OK_MSG else
+         */
+        public final BiFunction<Integer, String, RequestResult> delete = (index, param) -> {
+            return this.set.apply(index, param);
+        };
+
+        public final BiFunction<Integer, String, RequestResult> exit = (index, param) -> {
+            return new RequestResult(true, OK_MSG);
+        };
+
+        /**
+         * get a value from the 'database' with given index
+         * @param index index to return the database value for
+         * @return ERROR_MSG if index out of bound or conten empty, the value else
+         */
+        public final BiFunction<Integer, String, RequestResult> get = (index, param) -> {
+            if (isInvalidIndex(index) || cells[index - 1].isEmpty()) {
+                return new RequestResult(false, ERROR_MSG);
+            }
+            return new RequestResult(false, cells[index - 1]);
+        };
+
+        public Database() {
+            Arrays.fill(cells, "");
+            commands.put("set", set);
+            commands.put("get", get);
+            commands.put("delete", delete);
+            commands.put("exit", exit);
+        }
+
+        private boolean isInvalidIndex(int index) {
+            return index < 1 || index > DB_SIZE;
+        }
+
+        public HashMap<String, BiFunction<Integer, String, RequestResult>> getCommands() {
+            return commands;
+        }
+    }
+  learner_created: false
+- name: src/tmp/DbController.java
+  visible: true
+  text: |-
+    package tmp;
+
+    import java.util.Scanner;
+
+    import static tmp.Constants.*;
+
+    /**
+     * controller class that is called by main via run() entry point. It does the command loop and calls the cell database.
+     */
+    public class DbController {
+        private final static Scanner scanner = new Scanner(System.in);
+        private final Database jsonDb = new Database();
+        public DbController() {
+        }
+
+        /**
+         * entry point for Main that implements the CL-loop
+         */
+        public void run() {
+            String command;
+            boolean isExit = false;
+
+            while (!isExit) {
+                command = scanner.nextLine();
+                if("exit".equals(command)) {
+                    isExit = true;
+                } else {
+                    processCommand(command);
+                }
+            }
+        }
+
+        /**
+         * parse the command line given, call the CellDatabase if command recognized and print the result info.
+         * @param command a command line different from "exit"
+         */
+        public String processCommand(String command) {
+            String[] tokens = command.split("\\s+", 3);
+            if (tokens.length < 2) {
+                System.out.println(ERROR_MSG);
+                return "";  // all commands other then exit have at least an int parameter
+            }
+            int index = parseIndex(tokens[1]);
+            RequestResult res;
+            if(jsonDb.getCommands().containsKey(tokens[0])) {
+                String param = tokens.length < 3 ? "" : tokens[2];
+                res = jsonDb.getCommands().get(tokens[0]).apply(index, param);
+            } else {
+                res = new RequestResult(false, UNKNOWN_COMMAND_MSG);
+            }
+
+            return res.getMsg();
+        }
+
+        /**
+         * parse the index given for all valid commands
+         * @param indexToken token to parse for an index
+         * @return -1 if indexToken cannot be parsed, the parse result else
+         */
+        private int parseIndex(String indexToken) {
+            try {
+                return Integer.parseInt(indexToken);
+            } catch (NumberFormatException exception) {
+                return -1;
+            }
+        }
+    }
+  learner_created: false
+- name: src/tmp/Main.java
+  visible: true
+  text: |
+    package tmp;
+
+    import server.Session;
+
+    import java.io.IOException;
+    import java.net.InetAddress;
+    import java.net.ServerSocket;
+
+
+    public class Main {
+        private final static String ADDRESS = "127.0.0.1";
+        private final static int PORT = 23456;
+
+        public static void main(String[] args) {
+            try (ServerSocket server = new ServerSocket(PORT, 50, InetAddress.getByName(ADDRESS));) {
+                System.out.println("Server started!");
+                while (true) {
+                    //Session session = new Session(server.accept());
+                    break;
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+
+    }
+  learner_created: false
+- name: src/server/Main.java
+  visible: true
+  text: |
+    package server;
+
+    import java.io.IOException;
+    import java.net.InetAddress;
+    import java.net.ServerSocket;
+
+    public class Main {
+        private final static String ADDRESS = "127.0.0.1";
+        private final static int PORT = 23456;
+
+        public static void main(String[] args) {
+
+            try (ServerSocket server = new ServerSocket(PORT, 50, InetAddress.getByName(ADDRESS));) {
+                System.out.println("Server started!");
+                Database db = new Database(1000);
+                boolean isExit = false;
+                while (!isExit) {
+                    Session session = new Session(server.accept(), db);
+                    session.join();
+                    isExit = session.getExit();
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+
+
+        }
+    }
+  learner_created: false
+- name: src/server/Database.java
+  visible: true
+  text: |
+    package server;
+
+    import java.util.Arrays;
+
+    public class Database {
+        private String[] data;
+        public static final String EMPTY = "";
+        public static final String ERROR_MSG = "ERROR";
+        public static final String OK_MSG = "OK";
+        public static final String UNKNOWN_COMMAND_MSG = "Unknown command";
+
+
+        Database(int size) {
+            data = new String[size];
+            Arrays.fill(data, "");
+        }
+
+        public String get(int index) {
+
+            return isInvalidIndex(index) || data[index].equals(EMPTY) ? ERROR_MSG : data[index];
+        }
+
+        public String set(int index, String value) {
+            if (!isInvalidIndex(index)) {
+                data[index] = value;
+                return OK_MSG;
+            } else {
+                return ERROR_MSG;
+            }
+        }
+
+        public String delete(int index) {
+            return set(index, EMPTY);
+        }
+
+        private boolean isInvalidIndex(int index) {
+            return index < 1 || index > data.length;
+        }
+
+        @Override
+        public String toString() {
+            return Arrays.toString(data);
+        }
+    }
+  learner_created: false
+- name: src/server/Command.java
+  visible: true
+  text: |
+    package server;
+
+    public interface Command {
+        String execute();
+    }
+  learner_created: false
+- name: src/server/SetCommand.java
+  visible: true
+  text: |
+    package server;
+
+    public class SetCommand implements Command{
+        private Database db;
+        private int index;
+        private String value;
+
+        public SetCommand(Database db, int index, String value) {
+            this.db = db;
+            this.index = index;
+            this.value = value;
+        }
+
+        @Override
+        public String execute() {
+            return db.set(index, value);
+        }
+    }
+  learner_created: false
+- name: src/server/Controller.java
+  visible: true
+  text: |
+    package server;
+
+    public class Controller {
+        private Command command;
+
+        public void setCommand(Command command) {
+            this.command = command;
+        }
+
+        public String executeCommand() {
+            return command.execute();
+        }
+    }
+  learner_created: false
+- name: src/server/GetCommand.java
+  visible: true
+  text: |
+    package server;
+
+    public class GetCommand implements Command{
+        private Database db;
+        private int index;
+
+        public GetCommand(Database db, int index) {
+            this.db = db;
+            this.index = index;
+        }
+
+        @Override
+        public String execute() {
+            return db.get(index);
+        }
+    }
+  learner_created: false
+- name: src/server/DeleteCommand.java
+  visible: true
+  text: |
+    package server;
+
+    public class DeleteCommand implements Command{
+        private Database db;
+        private int index;
+
+        public DeleteCommand(Database db, int index) {
+            this.db = db;
+            this.index = index;
+        }
+
+        @Override
+        public String execute() {
+            return db.delete(index);
+        }
+    }
+  learner_created: false
+- name: src/tmp/RequestResult.java
+  visible: true
+  text: |
+    package tmp;
+
+    public class RequestResult {
+        private final String msg;
+        private final Boolean status;
+
+        public RequestResult(Boolean status, String msg) {
+            this.msg = msg;
+            this.status = status;
+        }
+
+        public String getMsg() {
+            return msg;
+        }
+
+        public Boolean getStatus() {
+            return status;
+        }
+    }
+  learner_created: false
+- name: src/server/Params.java
+  visible: true
+  text: |
+    package server;
+
+    import java.util.Arrays;
+    import java.util.List;
+
+    public class Params {
+        private String command = "";
+        private int index = -1;
+        private String value = "";
+        private Boolean status = false;
+
+        Params(String str) {
+            List<String> arrStr = Arrays.asList(str.split(" "));
+            if (arrStr.indexOf("-t") >= 0){
+                command = arrStr.get(arrStr.indexOf("-t") + 1);
+                if (arrStr.indexOf("-i") >= 0){
+                    index = Integer.parseInt(arrStr.get(arrStr.indexOf("-i") + 1));
+                    if (arrStr.indexOf("-m") >= 0){
+                        value = String.join(" ", arrStr.subList(arrStr.indexOf("-m") + 1, arrStr.size()));
+                    }
+                }
+            }
+            status = !command.equals("");
+        }
+
+        public String getCommand() {
+            return command;
+        }
+
+        public int getIndex() {
+            return index;
+        }
+
+        public String getValue() {
+            return value;
+        }
+
+        public Boolean getStatus() {
+            return status;
+        }
+    }
+  learner_created: false
+- name: src/server/Session.java
+  visible: true
+  text: |
+    package server;
+
+    import java.io.DataInputStream;
+    import java.io.DataOutputStream;
+    import java.io.IOException;
+    import java.net.Socket;
+
+    public class Session extends Thread{
+        private Socket socket;
+        private Database db;
+        private boolean isExit;
+
+        public Session(Socket socket, Database db) {
+            super();
+            this.socket = socket;
+            this.db = db;
+            this.start();
+            this.isExit = false;
+        }
+
+        @Override
+        public void run() {
+            try (
+                DataInputStream input = new DataInputStream(socket.getInputStream());
+                DataOutputStream output  = new DataOutputStream(socket.getOutputStream());
+            ) {
+                Controller controller = new Controller();
+
+                String msg = "";
+
+                Params p = new Params(input.readUTF());
+                if (p.getStatus()) {
+                    switch (p.getCommand()) {
+                        case "get":
+                            controller.setCommand(new GetCommand(db, p.getIndex()));
+                            msg = controller.executeCommand();
+                            break;
+                        case "set":
+                            controller.setCommand(new SetCommand(db, p.getIndex(), p.getValue()));
+                            msg = controller.executeCommand();
+                            break;
+                        case "delete":
+                            controller.setCommand(new DeleteCommand(db, p.getIndex()));
+                            msg = controller.executeCommand();
+                            break;
+                        case "exit":
+                            this.isExit = true;
+                            msg = db.OK_MSG;
+                            break;
+                        default:
+                            msg = db.ERROR_MSG;
+                    }
+                } else {
+                    msg = db.ERROR_MSG;
+                }
+                output.writeUTF(msg);
+                socket.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+
+        public Boolean getExit() {
+            return isExit;
+        }
+    }
+  learner_created: false
+- name: test/JsonDatabaseTest.java
+  visible: false
+  text: |
+    import org.hyperskill.hstest.dynamic.DynamicTest;
+    import org.hyperskill.hstest.stage.StageTest;
+    import org.hyperskill.hstest.testcase.CheckResult;
+    import org.hyperskill.hstest.testing.TestedProgram;
+
+    import static org.hyperskill.hstest.testing.expect.Expectation.expect;
+    import static org.hyperskill.hstest.testing.expect.json.JsonChecker.isObject;
+
+    public class JsonDatabaseTest extends StageTest<String> {
+
+        private static final String OK_STATUS = "OK";
+        private static final String ERROR_STATUS = "ERROR";
+        private static final String NO_SUCH_KEY_REASON = "No such key";
+        private static final String WRONG_EXIT = "The server should stop when client sends 'exit' request";
+
+        @DynamicTest(order = 1)
+        CheckResult checkExit() {
+
+            TestedProgram server = getServer();
+            server.startInBackground();
+
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+
+            TestedProgram client = getClient();
+            client.start("-t", "exit");
+
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+
+            if (!server.isFinished()) {
+                server.stop();
+                return CheckResult.wrong(WRONG_EXIT);
+            }
+
+            return CheckResult.correct();
+        }
+
+        @DynamicTest(order = 2)
+        CheckResult testInputs() {
+
+            TestedProgram server = getServer();
+            server.startInBackground();
+
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+
+            TestedProgram client;
+            String output;
+            String expectedValue;
+
+            client = getClient();
+            output = client.start("-t", "get", "-k", "1");
+
+            String requestJson = JsonFinder.findRequestJsonObject(output);
+            expect(requestJson)
+                .asJson()
+                .check(isObject()
+                    .value("type", "get")
+                    .value("key", "1")
+                );
+            String responseJson = JsonFinder.findResponseJsonObject(output);
+            expect(responseJson)
+                .asJson()
+                .check(isObject()
+                    .value("response", ERROR_STATUS)
+                    .value("reason", NO_SUCH_KEY_REASON)
+                );
+
+
+            client = getClient();
+            output = client.start("-t", "set", "-k", "1", "-v", "Hello world!");
+
+            requestJson = JsonFinder.findRequestJsonObject(output);
+            expect(requestJson)
+                .asJson()
+                .check(isObject()
+                    .value("type", "set")
+                    .value("key", "1")
+                    .value("value", "Hello world!")
+                );
+            responseJson = JsonFinder.findResponseJsonObject(output);
+            expect(responseJson)
+                .asJson()
+                .check(isObject()
+                    .value("response", OK_STATUS)
+                );
+
+
+            client = getClient();
+            output = client.start("-t", "set", "-k", "1", "-v", "HelloWorld!");
+
+            requestJson = JsonFinder.findRequestJsonObject(output);
+            expect(requestJson)
+                .asJson()
+                .check(isObject()
+                    .value("type", "set")
+                    .value("key", "1")
+                    .value("value", "HelloWorld!")
+                );
+            responseJson = JsonFinder.findResponseJsonObject(output);
+            expect(responseJson)
+                .asJson()
+                .check(isObject()
+                    .value("response", OK_STATUS)
+                );
+
+
+            client = getClient();
+            output = client.start("-t", "get", "-k", "1");
+
+            requestJson = JsonFinder.findRequestJsonObject(output);
+            expect(requestJson)
+                .asJson()
+                .check(isObject()
+                    .value("type", "get")
+                    .value("key", "1")
+                );
+            responseJson = JsonFinder.findResponseJsonObject(output);
+            expect(responseJson)
+                .asJson()
+                .check(isObject()
+                    .value("response", OK_STATUS)
+                    .value("value", "HelloWorld!")
+                );
+
+
+            client = getClient();
+            output = client.start("-t", "delete", "-k", "1");
+
+            requestJson = JsonFinder.findRequestJsonObject(output);
+            expect(requestJson)
+                .asJson()
+                .check(isObject()
+                    .value("type", "delete")
+                    .value("key", "1")
+                );
+            responseJson = JsonFinder.findResponseJsonObject(output);
+            expect(responseJson)
+                .asJson()
+                .check(isObject()
+                    .value("response", OK_STATUS)
+                );
+
+
+            client = getClient();
+            output = client.start("-t", "delete", "-k", "1");
+
+            requestJson = JsonFinder.findRequestJsonObject(output);
+            expect(requestJson)
+                .asJson()
+                .check(isObject()
+                    .value("type", "delete")
+                    .value("key", "1")
+                );
+            responseJson = JsonFinder.findResponseJsonObject(output);
+            expect(responseJson)
+                .asJson()
+                .check(isObject()
+                    .value("response", ERROR_STATUS)
+                    .value("reason", NO_SUCH_KEY_REASON)
+                );
+
+
+            client = getClient();
+            output = client.start("-t", "get", "-k", "1");
+            requestJson = JsonFinder.findRequestJsonObject(output);
+            expect(requestJson)
+                .asJson()
+                .check(isObject()
+                    .value("type", "get")
+                    .value("key", "1")
+                );
+            responseJson = JsonFinder.findResponseJsonObject(output);
+            expect(responseJson)
+                .asJson()
+                .check(isObject()
+                    .value("response", ERROR_STATUS)
+                    .value("reason", NO_SUCH_KEY_REASON)
+                );
+
+
+            client = getClient();
+            output = client.start("-t", "set", "-k", "text", "-v", "Some text here");
+
+            requestJson = JsonFinder.findRequestJsonObject(output);
+            expect(requestJson)
+                .asJson()
+                .check(isObject()
+                    .value("type", "set")
+                    .value("key", "text")
+                    .value("value", "Some text here")
+                );
+            responseJson = JsonFinder.findResponseJsonObject(output);
+            expect(responseJson)
+                .asJson()
+                .check(isObject()
+                    .value("response", OK_STATUS)
+                );
+
+
+            client = getClient();
+            output = client.start("-t", "get", "-k", "text");
+
+            requestJson = JsonFinder.findRequestJsonObject(output);
+            expect(requestJson)
+                .asJson()
+                .check(isObject()
+                    .value("type", "get")
+                    .value("key", "text")
+                );
+            expectedValue = "Some text here";
+            responseJson = JsonFinder.findResponseJsonObject(output);
+            expect(responseJson)
+                .asJson()
+                .check(isObject()
+                    .value("response", OK_STATUS)
+                    .value("value", expectedValue)
+                );
+
+
+            client = getClient();
+            output = client.start("-t", "get", "-k", "56");
+
+            requestJson = JsonFinder.findRequestJsonObject(output);
+            expect(requestJson)
+                .asJson()
+                .check(isObject()
+                    .value("type", "get")
+                    .value("key", "56")
+                );
+            responseJson = JsonFinder.findResponseJsonObject(output);
+            expect(responseJson)
+                .asJson()
+                .check(isObject()
+                    .value("response", ERROR_STATUS)
+                    .value("reason", NO_SUCH_KEY_REASON)
+                );
+
+
+            client = getClient();
+            output = client.start("-t", "delete", "-k", "56");
+
+            requestJson = JsonFinder.findRequestJsonObject(output);
+            expect(requestJson)
+                .asJson()
+                .check(isObject()
+                    .value("type", "delete")
+                    .value("key", "56")
+                );
+            responseJson = JsonFinder.findResponseJsonObject(output);
+            expect(responseJson)
+                .asJson()
+                .check(isObject()
+                    .value("response", ERROR_STATUS)
+                    .value("reason", NO_SUCH_KEY_REASON)
+                );
+
+
+            client = getClient();
+            output = client.start("-t", "delete", "-k", "100");
+
+            requestJson = JsonFinder.findRequestJsonObject(output);
+            expect(requestJson)
+                .asJson()
+                .check(isObject()
+                    .value("type", "delete")
+                    .value("key", "100")
+                );
+            responseJson = JsonFinder.findResponseJsonObject(output);
+            expect(responseJson)
+                .asJson()
+                .check(isObject()
+                    .value("response", ERROR_STATUS)
+                    .value("reason", NO_SUCH_KEY_REASON)
+                );
+
+            client = getClient();
+            output = client.start("-t", "delete", "-k", "That key doesn't exist");
+
+            requestJson = JsonFinder.findRequestJsonObject(output);
+            expect(requestJson)
+                .asJson()
+                .check(isObject()
+                    .value("type", "delete")
+                    .value("key", "That key doesn't exist")
+                );
+            responseJson = JsonFinder.findResponseJsonObject(output);
+            expect(responseJson)
+                .asJson()
+                .check(isObject()
+                    .value("response", ERROR_STATUS)
+                    .value("reason", NO_SUCH_KEY_REASON)
+                );
+
+
+            client = getClient();
+            client.start("-t", "exit");
+
+            return CheckResult.correct();
+        }
+
+        private static TestedProgram getClient() {
+            return new TestedProgram("client");
+        }
+
+        private static TestedProgram getServer() {
+            return new TestedProgram("server");
+        }
+
+    }
+  learner_created: false
+- name: test/JsonFinder.java
+  visible: false
+  text: |
+    import org.hyperskill.hstest.exception.outcomes.WrongAnswer;
+
+    import java.util.regex.Matcher;
+    import java.util.regex.Pattern;
+
+    public class JsonFinder {
+
+        private static final Pattern pattern = Pattern.compile("\\{.+}");
+
+        public static String findRequestJsonObject(String output) {
+
+            Matcher matcher = pattern.matcher(output);
+
+            while (matcher.find()) {
+                String json = matcher.group();
+                if (json.contains("type")) {
+                    return json;
+                }
+            }
+
+            throw new WrongAnswer("Can't find request JSON object in the output.\n" +
+                    "It should contain 'type' key");
+        }
+
+        public static String findResponseJsonObject(String output) {
+
+            Matcher matcher = pattern.matcher(output);
+
+            while (matcher.find()) {
+                String json = matcher.group();
+                if (json.contains("response")) {
+                    return json;
+                }
+            }
+
+            throw new WrongAnswer("Can't find request JSON object in the output.\n" +
+                    "It should contain 'response' key");
+        }
+    }
+  learner_created: false
+- name: src/json/JsonQuery.java
+  visible: true
+  learner_created: true
+feedback_link: https://hyperskill.org/learn/step/5493#comment
+status: Solved
+record: 3
